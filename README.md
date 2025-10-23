@@ -490,6 +490,27 @@ docker run -d \
   -e DEFAULT_LOCALE=en_US \
   --name pvp-rank-api \
   pvp-rank-api
+
+# Test the container
+curl http://localhost:3000/
+```
+
+### Quick Test
+
+```bash
+# Build and run with test credentials
+docker build -t pvp-rank-api .
+docker run -d -p 3000:3000 \
+  -e BATTLE_NET_CLIENT_ID=test \
+  -e BATTLE_NET_CLIENT_SECRET=test \
+  --name pvp-rank-api-test \
+  pvp-rank-api
+
+# Check if it's running
+curl http://localhost:3000/
+
+# Stop test container
+docker stop pvp-rank-api-test
 ```
 
 ### Using Docker Compose
