@@ -254,6 +254,7 @@ const rootRoute = createRoute({
 })
 
 app.openapi(rootRoute, (c) => {
+  console.log('[GET /] endpoint called')
   return c.json({
     message: 'WoW Classic PvP Rank API',
     query_parameters: {
@@ -326,6 +327,7 @@ app.openapi(characterRoute, async (c) => {
   try {
     const { realm, name } = c.req.valid('param')
     const { region, locale, fields, stream_friendly } = c.req.valid('query')
+    console.log(`[GET /character/${realm}/${name}] region=${region}, locale=${locale}, fields=${fields || 'none'}, stream_friendly=${stream_friendly || 'false'}`)
     
     const fieldsArray = fields ? fields.split(',') : []
     const streamFriendly = stream_friendly === '1'
@@ -468,6 +470,7 @@ app.openapi(classicCharacterRoute, async (c) => {
   try {
     const { realm, name } = c.req.valid('param')
     const { region, locale, fields, stream_friendly } = c.req.valid('query')
+    console.log(`[GET /classic-mop/character/${realm}/${name}] region=${region}, locale=${locale}, fields=${fields || 'none'}, stream_friendly=${stream_friendly || 'false'}`)
     
     const fieldsArray = fields ? fields.split(',') : []
     const streamFriendly = stream_friendly === '1'
@@ -612,6 +615,7 @@ app.openapi(bracketRoute, async (c) => {
   try {
     const { realmSlug, characterName, pvpBracket } = c.req.valid('param')
     const { region, locale, fields, stream_friendly } = c.req.valid('query')
+    console.log(`[GET /character/${realmSlug}/${characterName}/pvp-bracket/${pvpBracket}] region=${region}, locale=${locale}, fields=${fields || 'none'}, stream_friendly=${stream_friendly || 'false'}`)
     
     const fieldsArray = fields ? fields.split(',') : []
     const streamFriendly = stream_friendly === '1'
@@ -760,6 +764,7 @@ app.openapi(classicBracketRoute, async (c) => {
   try {
     const { realmSlug, characterName, pvpBracket } = c.req.valid('param')
     const { region, locale, fields, stream_friendly } = c.req.valid('query')
+    console.log(`[GET /classic-mop/character/${realmSlug}/${characterName}/pvp-bracket/${pvpBracket}] region=${region}, locale=${locale}, fields=${fields || 'none'}, stream_friendly=${stream_friendly || 'false'}`)
     
     const fieldsArray = fields ? fields.split(',') : []
     const streamFriendly = stream_friendly === '1'
