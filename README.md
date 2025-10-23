@@ -470,6 +470,79 @@ pvp-rank-api/
 └── README.md            # This documentation
 ```
 
+## Docker Deployment
+
+### Building the Docker Image
+
+```bash
+docker build -t pvp-rank-api .
+```
+
+### Running the Container
+
+```bash
+# Run with environment variables
+docker run -d \
+  -p 3000:3000 \
+  -e BATTLE_NET_CLIENT_ID=your_client_id \
+  -e BATTLE_NET_CLIENT_SECRET=your_client_secret \
+  -e BATTLE_NET_REGION=us \
+  -e DEFAULT_LOCALE=en_US \
+  --name pvp-rank-api \
+  pvp-rank-api
+```
+
+### Using Docker Compose
+
+Create a `docker-compose.yml` file:
+
+```yaml
+version: '3.8'
+
+services:
+  pvp-rank-api:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - BATTLE_NET_CLIENT_ID=${BATTLE_NET_CLIENT_ID}
+      - BATTLE_NET_CLIENT_SECRET=${BATTLE_NET_CLIENT_SECRET}
+      - BATTLE_NET_REGION=${BATTLE_NET_REGION:-us}
+      - DEFAULT_LOCALE=${DEFAULT_LOCALE:-en_US}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+```
+
+Run with Docker Compose:
+
+```bash
+# Create .env file with your credentials
+echo "BATTLE_NET_CLIENT_ID=your_client_id" > .env
+echo "BATTLE_NET_CLIENT_SECRET=your_client_secret" >> .env
+
+# Start the service
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+
+# Stop the service
+docker-compose down
+```
+
+### Docker Features
+
+- **Multi-stage build**: Optimized image size with production dependencies only
+- **Non-root user**: Enhanced security by running as non-privileged user
+- **Health checks**: Automatic monitoring of API availability
+- **Environment variables**: Secure configuration through environment variables
+- **Alpine Linux**: Small and secure base image
+
 ## Key Implementation Details
 
 - **Token Management**: Automatic Battle.net token caching with 60-second expiration buffer
@@ -478,3 +551,4 @@ pvp-rank-api/
 - **URL Encoding**: Automatic encoding of realm and character names for API compatibility
 - **Response Formatting**: Support for both JSON and stream-friendly text output
 - **Win Rate Calculation**: Automatic computation of win rates for season and weekly statistics
+- **Docker Support**: Containerized deployment with health checks and security best practices
