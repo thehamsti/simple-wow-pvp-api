@@ -3,6 +3,7 @@ import { validator } from 'hono/validator'
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi'
 import { swaggerUI } from '@hono/swagger-ui'
 import { z } from 'zod'
+import { cache } from './cache'
 
 interface BattleNetTokenResponse {
   access_token: string
@@ -346,6 +347,22 @@ app.openapi(characterRoute, async (c) => {
       return c.json({ error: 'Realm and character name are required' }, 400)
     }
 
+    const cacheKey = `retail:${region}:${realm.toLowerCase()}:${name.toLowerCase()}:${locale}`
+    
+    const cached = cache.get(cacheKey)
+    if (cached) {
+      const filteredResult = fieldsArray.length > 0 ? 
+        Object.fromEntries(fieldsArray.map(field => [field, cached[field as keyof typeof cached]])) : 
+        cached
+
+      if (streamFriendly) {
+        const text = formatCharacterAsText(filteredResult)
+        return c.text(text)
+      }
+
+      return c.json(filteredResult)
+    }
+
     const token = await getBattleNetToken()
     const namespace = `profile-${region}`
     
@@ -386,6 +403,8 @@ app.openapi(characterRoute, async (c) => {
       },
       last_updated: new Date().toISOString()
     }
+
+    cache.set(cacheKey, fullResult, 300)
 
     const filteredResult = fieldsArray.length > 0 ? 
       Object.fromEntries(fieldsArray.map(field => [field, fullResult[field as keyof typeof fullResult]])) : 
@@ -470,6 +489,22 @@ app.openapi(classicCharacterRoute, async (c) => {
       return c.json({ error: 'Realm and character name are required' }, 400)
     }
 
+    const cacheKey = `classic:${region}:${realm.toLowerCase()}:${name.toLowerCase()}:${locale}`
+    
+    const cached = cache.get(cacheKey)
+    if (cached) {
+      const filteredResult = fieldsArray.length > 0 ? 
+        Object.fromEntries(fieldsArray.map(field => [field, cached[field as keyof typeof cached]])) : 
+        cached
+
+      if (streamFriendly) {
+        const text = formatCharacterAsText(filteredResult)
+        return c.text(text)
+      }
+
+      return c.json(filteredResult)
+    }
+
     const token = await getBattleNetToken()
     const namespace = `profile-classic-${region}`
     
@@ -511,6 +546,8 @@ app.openapi(classicCharacterRoute, async (c) => {
       last_updated: new Date().toISOString(),
       game_version: 'classic-mop'
     }
+
+    cache.set(cacheKey, fullResult, 300)
 
     const filteredResult = fieldsArray.length > 0 ? 
       Object.fromEntries(fieldsArray.map(field => [field, fullResult[field as keyof typeof fullResult]])) : 
@@ -596,6 +633,22 @@ app.openapi(bracketRoute, async (c) => {
       return c.json({ error: 'Realm slug and character name are required' }, 400)
     }
 
+    const cacheKey = `retail:bracket:${region}:${realmSlug.toLowerCase()}:${characterName.toLowerCase()}:${pvpBracket}:${locale}`
+    
+    const cached = cache.get(cacheKey)
+    if (cached) {
+      const filteredResult = fieldsArray.length > 0 ? 
+        Object.fromEntries(fieldsArray.map(field => [field, cached[field as keyof typeof cached]])) : 
+        cached
+
+      if (streamFriendly) {
+        const text = formatBracketAsText(filteredResult)
+        return c.text(text)
+      }
+
+      return c.json(filteredResult)
+    }
+
     const token = await getBattleNetToken()
     const namespace = `profile-${region}`
     
@@ -641,6 +694,8 @@ app.openapi(bracketRoute, async (c) => {
       },
       last_updated: new Date().toISOString()
     }
+
+    cache.set(cacheKey, fullResult, 300)
 
     const filteredResult = fieldsArray.length > 0 ? 
       Object.fromEntries(fieldsArray.map(field => [field, fullResult[field as keyof typeof fullResult]])) : 
@@ -726,6 +781,22 @@ app.openapi(classicBracketRoute, async (c) => {
       return c.json({ error: 'Realm slug and character name are required' }, 400)
     }
 
+    const cacheKey = `classic:bracket:${region}:${realmSlug.toLowerCase()}:${characterName.toLowerCase()}:${pvpBracket}:${locale}`
+    
+    const cached = cache.get(cacheKey)
+    if (cached) {
+      const filteredResult = fieldsArray.length > 0 ? 
+        Object.fromEntries(fieldsArray.map(field => [field, cached[field as keyof typeof cached]])) : 
+        cached
+
+      if (streamFriendly) {
+        const text = formatBracketAsText(filteredResult)
+        return c.text(text)
+      }
+
+      return c.json(filteredResult)
+    }
+
     const token = await getBattleNetToken()
     const namespace = `profile-classic-${region}`
     
@@ -772,6 +843,8 @@ app.openapi(classicBracketRoute, async (c) => {
       last_updated: new Date().toISOString(),
       game_version: 'classic-mop'
     }
+
+    cache.set(cacheKey, fullResult, 300)
 
     const filteredResult = fieldsArray.length > 0 ? 
       Object.fromEntries(fieldsArray.map(field => [field, fullResult[field as keyof typeof fullResult]])) : 
