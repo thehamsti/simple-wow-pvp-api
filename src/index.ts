@@ -139,14 +139,10 @@ const QuerySchema = z.object({
 let cachedToken: { token: string; expiresAt: number } | null = null
 
 function formatCharacterAsText(data: any): string {
-  const lines: string[] = []
+  const parts: string[] = []
   
   if (data.character) {
-    lines.push(`${data.character.name} - ${data.character.realm}`)
-  }
-  
-  if (data.honor) {
-    lines.push(`Honor Level: ${data.honor.level} | HKs: ${data.honor.honorable_kills}`)
+    parts.push(`${data.character.name} - ${data.character.realm}`)
   }
   
   if (data.ratings) {
@@ -154,40 +150,36 @@ function formatCharacterAsText(data: any): string {
     if (data.ratings['2v2']) ratings.push(`2v2: ${data.ratings['2v2'].rating}`)
     if (data.ratings['3v3']) ratings.push(`3v3: ${data.ratings['3v3'].rating}`)
     if (data.ratings['rbg']) ratings.push(`RBG: ${data.ratings['rbg'].rating}`)
-    if (ratings.length > 0) lines.push(`Ratings: ${ratings.join(' | ')}`)
+    if (ratings.length > 0) parts.push(ratings.join(' | '))
   }
   
-  if (data.last_updated) {
-    lines.push(`Updated: ${new Date(data.last_updated).toLocaleString()}`)
+  if (data.honor) {
+    parts.push(`Honor: ${data.honor.level} | HKs: ${data.honor.honorable_kills}`)
   }
   
-  return lines.join('\n')
+  return parts.join(' | ')
 }
 
 function formatBracketAsText(data: any): string {
-  const lines: string[] = []
+  const parts: string[] = []
   
-  if (data.character) {
-    lines.push(`${data.character.name} - ${data.character.realm} (${data.bracket})`)
+  if (data.character && data.bracket) {
+    parts.push(`${data.character.name} - ${data.character.realm} (${data.bracket})`)
   }
   
   if (data.rating !== undefined) {
-    lines.push(`Rating: ${data.rating}`)
+    parts.push(`Rating: ${data.rating}`)
   }
   
   if (data.season) {
-    lines.push(`Season: ${data.season.won}-${data.season.lost} (${data.season.played} games, ${data.season.win_rate}% WR)`)
+    parts.push(`Season: ${data.season.won}-${data.season.lost} (${data.season.win_rate}% WR)`)
   }
   
   if (data.weekly) {
-    lines.push(`Weekly: ${data.weekly.won}-${data.weekly.lost} (${data.weekly.played} games, ${data.weekly.win_rate}% WR)`)
+    parts.push(`Weekly: ${data.weekly.won}-${data.weekly.lost} (${data.weekly.win_rate}% WR)`)
   }
   
-  if (data.last_updated) {
-    lines.push(`Updated: ${new Date(data.last_updated).toLocaleString()}`)
-  }
-  
-  return lines.join('\n')
+  return parts.join(' | ')
 }
 
 async function getBattleNetToken(): Promise<string> {
