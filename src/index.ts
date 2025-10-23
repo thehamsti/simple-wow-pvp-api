@@ -1,5 +1,8 @@
 import { Hono } from 'hono'
 import { validator } from 'hono/validator'
+import { OpenAPIHono, createRoute } from '@hono/zod-openapi'
+import { swaggerUI } from '@hono/swagger-ui'
+import { z } from 'zod'
 
 interface BattleNetTokenResponse {
   access_token: string
@@ -68,7 +71,69 @@ interface PvPBracket {
   }
 }
 
-const app = new Hono()
+const app = new OpenAPIHono()
+
+const CharacterSchema = z.object({
+  name: z.string(),
+  realm: z.string(),
+  realm_slug: z.string()
+})
+
+const HonorSchema = z.object({
+  level: z.number(),
+  honorable_kills: z.number()
+})
+
+const RatingSchema = z.object({
+  rating: z.number().nullable(),
+  won: z.number().nullable(),
+  lost: z.number().nullable(),
+  played: z.number().nullable(),
+  rank: z.number().nullable()
+})
+
+const RatingsSchema = z.object({
+  '2v2': RatingSchema.nullable(),
+  '3v3': RatingSchema.nullable(),
+  'rbg': RatingSchema.nullable()
+})
+
+const MatchStatisticsSchema = z.object({
+  played: z.number(),
+  won: z.number(),
+  lost: z.number(),
+  win_rate: z.number()
+})
+
+const CharacterResponseSchema = z.object({
+  character: CharacterSchema.optional(),
+  honor: HonorSchema.optional(),
+  ratings: RatingsSchema.optional(),
+  last_updated: z.string().optional(),
+  game_version: z.string().optional()
+})
+
+const BracketResponseSchema = z.object({
+  character: CharacterSchema.optional(),
+  bracket: z.string().optional(),
+  rating: z.number().optional(),
+  season: MatchStatisticsSchema.optional(),
+  weekly: MatchStatisticsSchema.optional(),
+  last_updated: z.string().optional(),
+  game_version: z.string().optional()
+})
+
+const ErrorResponseSchema = z.object({
+  error: z.string(),
+  message: z.string().optional()
+})
+
+const QuerySchema = z.object({
+  region: z.enum(['us', 'eu', 'kr', 'tw']).optional().default('us'),
+  locale: z.string().optional().default('en_US'),
+  fields: z.string().optional(),
+  stream_friendly: z.enum(['1']).optional()
+})
 
 let cachedToken: { token: string; expiresAt: number } | null = null
 
@@ -162,7 +227,40 @@ async function getBattleNetToken(): Promise<string> {
   return data.access_token
 }
 
-app.get('/', (c) => {
+const rootRoute = createRoute({
+  method: 'get',
+  path: '/',
+  responses: {
+    200: {
+      content: {
+        'application/json': {
+          schema: z.object({
+            message: z.string(),
+            query_parameters: z.object({
+              region: z.string(),
+              locale: z.string(),
+              fields: z.string(),
+              stream_friendly: z.string()
+            }),
+            endpoints: z.object({
+              'GET /character/:realm/:name': z.string(),
+              'GET /classic-mop/character/:realm/:name': z.string(),
+              'GET /character/:realmSlug/:characterName/pvp-bracket/:pvpBracket': z.string(),
+              'GET /classic-mop/character/:realmSlug/:characterName/pvp-bracket/:pvpBracket': z.string()
+            }),
+            field_options: z.object({
+              character_endpoints: z.string(),
+              bracket_endpoints: z.string()
+            })
+          })
+        }
+      },
+      description: 'API information and available endpoints'
+    }
+  }
+})
+
+app.openapi(rootRoute, (c) => {
   return c.json({
     message: 'WoW Classic PvP Rank API',
     query_parameters: {
@@ -184,387 +282,535 @@ app.get('/', (c) => {
   })
 })
 
-app.get(
-  '/character/:realm/:name',
-  validator('query', (value, c) => {
-    const region = value.region || 'us'
-    const locale = value.locale || 'en_US'
-    const fields = value.fields ? value.fields.split(',') : []
-    const streamFriendly = value.stream_friendly === '1'
-    const validRegions = ['us', 'eu', 'kr', 'tw']
+const characterRoute = createRoute({
+  method: 'get',
+  path: '/character/{realm}/{name}',
+  tags: ['retail'],
+  request: {
+    params: z.object({
+      realm: z.string(),
+      name: z.string()
+    }),
+    query: QuerySchema
+  },
+  responses: {
+    200: {
+      content: {
+        'application/json': {
+          schema: CharacterResponseSchema
+        }
+      },
+      description: 'Character PvP data retrieved successfully'
+    },
+    400: {
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
+        }
+      },
+      description: 'Bad request - invalid parameters'
+    },
+    404: {
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
+        }
+      },
+      description: 'Character not found'
+    },
+    500: {
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
+        }
+      },
+      description: 'Internal server error'
+    }
+  }
+})
+
+app.openapi(characterRoute, async (c) => {
+  try {
+    const { realm, name } = c.req.valid('param')
+    const { region, locale, fields, stream_friendly } = c.req.valid('query')
+    
+    const fieldsArray = fields ? fields.split(',') : []
+    const streamFriendly = stream_friendly === '1'
     const validFields = ['character', 'honor', 'ratings', 'last_updated']
     
-    if (!validRegions.includes(region)) {
-      return c.json({ error: 'Invalid region. Must be one of: us, eu, kr, tw' }, 400)
-    }
-    
-    if (fields.length > 0 && !fields.every(field => validFields.includes(field))) {
+    if (fieldsArray.length > 0 && !fieldsArray.every(field => validFields.includes(field))) {
       return c.json({ error: `Invalid fields. Valid fields are: ${validFields.join(', ')}` }, 400)
     }
+     
+    if (!realm || !name) {
+      return c.json({ error: 'Realm and character name are required' }, 400)
+    }
+
+    const token = await getBattleNetToken()
+    const namespace = `profile-${region}`
     
-    return { region, locale, fields, streamFriendly }
-}),
-  async (c) => {
-    try {
-      const { realm, name } = c.req.param()
-      const { region, locale, fields, streamFriendly } = c.req.valid('query')
-       
-      if (!realm || !name) {
-        return c.json({ error: 'Realm and character name are required' }, 400)
+    const encodedRealm = encodeURIComponent(realm.toLowerCase())
+    const encodedName = encodeURIComponent(name.toLowerCase())
+    
+    const pvpUrl = `https://${region}.api.blizzard.com/profile/wow/character/${encodedRealm}/${encodedName}/pvp-summary?namespace=${namespace}&locale=${locale}`
+    
+    const response = await fetch(pvpUrl, {
+      headers: {
+        'Authorization': `Bearer ${token}`
       }
+    })
 
-      const token = await getBattleNetToken()
-      const namespace = `profile-${region}`
-      
-      const encodedRealm = encodeURIComponent(realm.toLowerCase())
-      const encodedName = encodeURIComponent(name.toLowerCase())
-      
-      const pvpUrl = `https://${region}.api.blizzard.com/profile/wow/character/${encodedRealm}/${encodedName}/pvp-summary?namespace=${namespace}&locale=${locale}`
-      
-      const response = await fetch(pvpUrl, {
-        headers: {
-          'Authorization': `Bearer ${token}`
+    if (!response.ok) {
+      if (response.status === 404) {
+        return c.json({ error: 'Character not found' }, 404)
+      }
+      throw new Error(`Battle.net API error: ${response.status}`)
+    }
+
+    const pvpData: PvPSummary = await response.json()
+    
+    const fullResult = {
+      character: {
+        name: pvpData.character.name,
+        realm: pvpData.character.realm.name,
+        realm_slug: pvpData.character.realm.slug
+      },
+      honor: {
+        level: pvpData.honor_level,
+        honorable_kills: pvpData.pvp_honorable_kills
+      },
+      ratings: {
+        '2v2': pvpData.brackets?.['2v2'] || null,
+        '3v3': pvpData.brackets?.['3v3'] || null,
+        'rbg': pvpData.brackets?.['rbg'] || null
+      },
+      last_updated: new Date().toISOString()
+    }
+
+    const filteredResult = fieldsArray.length > 0 ? 
+      Object.fromEntries(fieldsArray.map(field => [field, fullResult[field as keyof typeof fullResult]])) : 
+      fullResult
+
+    if (streamFriendly) {
+      const text = formatCharacterAsText(filteredResult)
+      return c.text(text)
+    }
+
+    return c.json(filteredResult)
+  } catch (error) {
+    console.error('Error fetching character data:', error)
+    return c.json({ 
+      error: 'Failed to fetch character data',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    }, 500)
+  }
+})
+
+const classicCharacterRoute = createRoute({
+  method: 'get',
+  path: '/classic-mop/character/{realm}/{name}',
+  tags: ['mop'],
+  request: {
+    params: z.object({
+      realm: z.string(),
+      name: z.string()
+    }),
+    query: QuerySchema
+  },
+  responses: {
+    200: {
+      content: {
+        'application/json': {
+          schema: CharacterResponseSchema
         }
-      })
-
-      if (!response.ok) {
-        if (response.status === 404) {
-          return c.json({ error: 'Character not found' }, 404)
+      },
+      description: 'Classic MoP Character PvP data retrieved successfully'
+    },
+    400: {
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
         }
-        throw new Error(`Battle.net API error: ${response.status}`)
-      }
-
-      const pvpData: PvPSummary = await response.json()
-      
-      const fullResult = {
-        character: {
-          name: pvpData.character.name,
-          realm: pvpData.character.realm.name,
-          realm_slug: pvpData.character.realm.slug
-        },
-        honor: {
-          level: pvpData.honor_level,
-          honorable_kills: pvpData.pvp_honorable_kills
-        },
-        ratings: {
-          '2v2': pvpData.brackets?.['2v2'] || null,
-          '3v3': pvpData.brackets?.['3v3'] || null,
-          'rbg': pvpData.brackets?.['rbg'] || null
-        },
-        last_updated: new Date().toISOString()
-      }
-
-      const filteredResult = fields.length > 0 ? 
-        Object.fromEntries(fields.map(field => [field, fullResult[field as keyof typeof fullResult]])) : 
-        fullResult
-
-      if (streamFriendly) {
-        const text = formatCharacterAsText(filteredResult)
-        return c.text(text)
-      }
-
-      return c.json(filteredResult)
-    } catch (error) {
-      console.error('Error fetching character data:', error)
-      return c.json({ 
-        error: 'Failed to fetch character data',
-        message: error instanceof Error ? error.message : 'Unknown error'
-      }, 500)
+      },
+      description: 'Bad request - invalid parameters'
+    },
+    404: {
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
+        }
+      },
+      description: 'Classic MoP character not found'
+    },
+    500: {
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
+        }
+      },
+      description: 'Internal server error'
     }
   }
-)
+})
 
-app.get(
-  '/classic-mop/character/:realm/:name',
-  validator('query', (value, c) => {
-    const region = value.region || 'us'
-    const locale = value.locale || 'en_US'
-    const fields = value.fields ? value.fields.split(',') : []
-    const streamFriendly = value.stream_friendly === '1'
-    const validRegions = ['us', 'eu', 'kr', 'tw']
+app.openapi(classicCharacterRoute, async (c) => {
+  try {
+    const { realm, name } = c.req.valid('param')
+    const { region, locale, fields, stream_friendly } = c.req.valid('query')
+    
+    const fieldsArray = fields ? fields.split(',') : []
+    const streamFriendly = stream_friendly === '1'
     const validFields = ['character', 'honor', 'ratings', 'last_updated', 'game_version']
     
-    if (!validRegions.includes(region)) {
-      return c.json({ error: 'Invalid region. Must be one of: us, eu, kr, tw' }, 400)
-    }
-    
-    if (fields.length > 0 && !fields.every(field => validFields.includes(field))) {
+    if (fieldsArray.length > 0 && !fieldsArray.every(field => validFields.includes(field))) {
       return c.json({ error: `Invalid fields. Valid fields are: ${validFields.join(', ')}` }, 400)
     }
     
-    return { region, locale, fields, streamFriendly }
-  }),
-  async (c) => {
-    try {
-      const { realm, name } = c.req.param()
-      const { region, locale, fields, streamFriendly } = c.req.valid('query')
-      
-      if (!realm || !name) {
-        return c.json({ error: 'Realm and character name are required' }, 400)
-      }
+    if (!realm || !name) {
+      return c.json({ error: 'Realm and character name are required' }, 400)
+    }
 
-      const token = await getBattleNetToken()
-      const namespace = `profile-classic-${region}`
-      
-      const encodedRealm = encodeURIComponent(realm.toLowerCase())
-      const encodedName = encodeURIComponent(name.toLowerCase())
-      
-      const pvpUrl = `https://${region}.api.blizzard.com/profile/wow/character/${encodedRealm}/${encodedName}/pvp-summary?namespace=${namespace}&locale=${locale}`
-      
-      const response = await fetch(pvpUrl, {
-        headers: {
-          'Authorization': `Bearer ${token}`
+    const token = await getBattleNetToken()
+    const namespace = `profile-classic-${region}`
+    
+    const encodedRealm = encodeURIComponent(realm.toLowerCase())
+    const encodedName = encodeURIComponent(name.toLowerCase())
+    
+    const pvpUrl = `https://${region}.api.blizzard.com/profile/wow/character/${encodedRealm}/${encodedName}/pvp-summary?namespace=${namespace}&locale=${locale}`
+    
+    const response = await fetch(pvpUrl, {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    })
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        return c.json({ error: 'Classic MoP character not found' }, 404)
+      }
+      throw new Error(`Battle.net API error: ${response.status}`)
+    }
+
+    const pvpData: PvPSummary = await response.json()
+   
+    const fullResult = {
+      character: {
+        name: pvpData.character.name,
+        realm: pvpData.character.realm.name,
+        realm_slug: pvpData.character.realm.slug
+      },
+      honor: {
+        level: pvpData.honor_level,
+        honorable_kills: pvpData.pvp_honorable_kills
+      },
+      ratings: {
+        '2v2': pvpData.brackets?.['2v2'] || null,
+        '3v3': pvpData.brackets?.['3v3'] || null,
+        'rbg': pvpData.brackets?.['rbg'] || null
+      },
+      last_updated: new Date().toISOString(),
+      game_version: 'classic-mop'
+    }
+
+    const filteredResult = fieldsArray.length > 0 ? 
+      Object.fromEntries(fieldsArray.map(field => [field, fullResult[field as keyof typeof fullResult]])) : 
+      fullResult
+
+    if (streamFriendly) {
+      const text = formatCharacterAsText(filteredResult)
+      return c.text(text)
+    }
+
+    return c.json(filteredResult)
+  } catch (error) {
+    console.error('Error fetching Classic MoP character data:', error)
+    return c.json({ 
+      error: 'Failed to fetch Classic MoP character data',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    }, 500)
+  }
+})
+
+const bracketRoute = createRoute({
+  method: 'get',
+  path: '/character/{realmSlug}/{characterName}/pvp-bracket/{pvpBracket}',
+  tags: ['retail'],
+  request: {
+    params: z.object({
+      realmSlug: z.string(),
+      characterName: z.string(),
+      pvpBracket: z.enum(['2v2', '3v3', 'rbg'])
+    }),
+    query: QuerySchema
+  },
+  responses: {
+    200: {
+      content: {
+        'application/json': {
+          schema: BracketResponseSchema
         }
-      })
-
-      if (!response.ok) {
-        if (response.status === 404) {
-          return c.json({ error: 'Classic MoP character not found' }, 404)
+      },
+      description: 'Character PvP bracket data retrieved successfully'
+    },
+    400: {
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
         }
-        throw new Error(`Battle.net API error: ${response.status}`)
-      }
-
-      const pvpData: PvPSummary = await response.json()
-     
-      console.log(pvpData)
-      const fullResult = {
-        character: {
-          name: pvpData.character.name,
-          realm: pvpData.character.realm.name,
-          realm_slug: pvpData.character.realm.slug
-        },
-        honor: {
-          level: pvpData.honor_level,
-          honorable_kills: pvpData.pvp_honorable_kills
-        },
-        ratings: {
-          '2v2': pvpData.brackets?.['2v2'] || null,
-          '3v3': pvpData.brackets?.['3v3'] || null,
-          'rbg': pvpData.brackets?.['rbg'] || null
-        },
-        last_updated: new Date().toISOString(),
-        game_version: 'classic-mop'
-      }
-
-      const filteredResult = fields.length > 0 ? 
-        Object.fromEntries(fields.map(field => [field, fullResult[field as keyof typeof fullResult]])) : 
-        fullResult
-
-      if (streamFriendly) {
-        const text = formatCharacterAsText(filteredResult)
-        return c.text(text)
-      }
-
-      return c.json(filteredResult)
-    } catch (error) {
-      console.error('Error fetching Classic MoP character data:', error)
-      return c.json({ 
-        error: 'Failed to fetch Classic MoP character data',
-        message: error instanceof Error ? error.message : 'Unknown error'
-      }, 500)
+      },
+      description: 'Bad request - invalid parameters'
+    },
+    404: {
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
+        }
+      },
+      description: 'Character or bracket not found'
+    },
+    500: {
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
+        }
+      },
+      description: 'Internal server error'
     }
   }
-)
+})
 
-app.get(
-  '/character/:realmSlug/:characterName/pvp-bracket/:pvpBracket',
-  validator('query', (value, c) => {
-    const region = value.region || 'us'
-    const locale = value.locale || 'en_US'
-    const fields = value.fields ? value.fields.split(',') : []
-    const streamFriendly = value.stream_friendly === '1'
-    const validRegions = ['us', 'eu', 'kr', 'tw']
+app.openapi(bracketRoute, async (c) => {
+  try {
+    const { realmSlug, characterName, pvpBracket } = c.req.valid('param')
+    const { region, locale, fields, stream_friendly } = c.req.valid('query')
+    
+    const fieldsArray = fields ? fields.split(',') : []
+    const streamFriendly = stream_friendly === '1'
     const validFields = ['character', 'bracket', 'rating', 'season', 'weekly', 'last_updated']
     
-    if (!validRegions.includes(region)) {
-      return c.json({ error: 'Invalid region. Must be one of: us, eu, kr, tw' }, 400)
-    }
-    
-    if (fields.length > 0 && !fields.every(field => validFields.includes(field))) {
+    if (fieldsArray.length > 0 && !fieldsArray.every(field => validFields.includes(field))) {
       return c.json({ error: `Invalid fields. Valid fields are: ${validFields.join(', ')}` }, 400)
     }
     
-    return { region, locale, fields, streamFriendly }
-  }),
-  async (c) => {
-    try {
-      const { realmSlug, characterName, pvpBracket } = c.req.param()
-      const { region, locale } = c.req.valid('query')
-      
-      const validBrackets = ['2v2', '3v3', 'rbg']
-      if (!validBrackets.includes(pvpBracket)) {
-        return c.json({ error: 'Invalid PvP bracket. Must be one of: 2v2, 3v3, rbg' }, 400)
-      }
-      
-      if (!realmSlug || !characterName) {
-        return c.json({ error: 'Realm slug and character name are required' }, 400)
-      }
+    if (!realmSlug || !characterName) {
+      return c.json({ error: 'Realm slug and character name are required' }, 400)
+    }
 
-      const token = await getBattleNetToken()
-      const namespace = `profile-${region}`
-      
-      const encodedRealm = encodeURIComponent(realmSlug.toLowerCase())
-      const encodedName = encodeURIComponent(characterName.toLowerCase())
-      
-      const pvpUrl = `https://${region}.api.blizzard.com/profile/wow/character/${encodedRealm}/${encodedName}/pvp-bracket/${pvpBracket}?namespace=${namespace}&locale=${locale}`
-      
-      const response = await fetch(pvpUrl, {
-        headers: {
-          'Authorization': `Bearer ${token}`
+    const token = await getBattleNetToken()
+    const namespace = `profile-${region}`
+    
+    const encodedRealm = encodeURIComponent(realmSlug.toLowerCase())
+    const encodedName = encodeURIComponent(characterName.toLowerCase())
+    
+    const pvpUrl = `https://${region}.api.blizzard.com/profile/wow/character/${encodedRealm}/${encodedName}/pvp-bracket/${pvpBracket}?namespace=${namespace}&locale=${locale}`
+    
+    const response = await fetch(pvpUrl, {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    })
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        return c.json({ error: 'Character or bracket not found' }, 404)
+      }
+      throw new Error(`Battle.net API error: ${response.status}`)
+    }
+
+    const bracketData: PvPBracket = await response.json()
+    
+    const fullResult = {
+      character: {
+        name: bracketData.character.name,
+        realm: bracketData.character.realm.name,
+        realm_slug: bracketData.character.realm.slug
+      },
+      bracket: pvpBracket,
+      rating: bracketData.rating,
+      season: {
+        played: bracketData.season_match_statistics.played,
+        won: bracketData.season_match_statistics.won,
+        lost: bracketData.season_match_statistics.lost,
+        win_rate: bracketData.season_match_statistics.played > 0 ? Math.round((bracketData.season_match_statistics.won / bracketData.season_match_statistics.played) * 100) : 0
+      },
+      weekly: {
+        played: bracketData.weekly_match_statistics.played,
+        won: bracketData.weekly_match_statistics.won,
+        lost: bracketData.weekly_match_statistics.lost,
+        win_rate: bracketData.weekly_match_statistics.played > 0 ? Math.round((bracketData.weekly_match_statistics.won / bracketData.weekly_match_statistics.played) * 100) : 0
+      },
+      last_updated: new Date().toISOString()
+    }
+
+    const filteredResult = fieldsArray.length > 0 ? 
+      Object.fromEntries(fieldsArray.map(field => [field, fullResult[field as keyof typeof fullResult]])) : 
+      fullResult
+
+    if (streamFriendly) {
+      const text = formatBracketAsText(filteredResult)
+      return c.text(text)
+    }
+
+    return c.json(filteredResult)
+  } catch (error) {
+    console.error('Error fetching bracket data:', error)
+    return c.json({ 
+      error: 'Failed to fetch bracket data',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    }, 500)
+  }
+})
+
+const classicBracketRoute = createRoute({
+  method: 'get',
+  path: '/classic-mop/character/{realmSlug}/{characterName}/pvp-bracket/{pvpBracket}',
+  tags: ['mop'],
+  request: {
+    params: z.object({
+      realmSlug: z.string(),
+      characterName: z.string(),
+      pvpBracket: z.enum(['2v2', '3v3', 'rbg'])
+    }),
+    query: QuerySchema
+  },
+  responses: {
+    200: {
+      content: {
+        'application/json': {
+          schema: BracketResponseSchema
         }
-      })
-
-      if (!response.ok) {
-        if (response.status === 404) {
-          return c.json({ error: 'Character or bracket not found' }, 404)
+      },
+      description: 'Classic MoP Character PvP bracket data retrieved successfully'
+    },
+    400: {
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
         }
-        throw new Error(`Battle.net API error: ${response.status}`)
-      }
-
-      const bracketData: PvPBracket = await response.json()
-      
-      const fullResult = {
-        character: {
-          name: bracketData.character.name,
-          realm: bracketData.character.realm.name,
-          realm_slug: bracketData.character.realm.slug
-        },
-        bracket: pvpBracket,
-        rating: bracketData.rating,
-        season: {
-          played: bracketData.season_match_statistics.played,
-          won: bracketData.season_match_statistics.won,
-          lost: bracketData.season_match_statistics.lost,
-          win_rate: bracketData.season_match_statistics.played > 0 ? Math.round((bracketData.season_match_statistics.won / bracketData.season_match_statistics.played) * 100) : 0
-        },
-        weekly: {
-          played: bracketData.weekly_match_statistics.played,
-          won: bracketData.weekly_match_statistics.won,
-          lost: bracketData.weekly_match_statistics.lost,
-          win_rate: bracketData.weekly_match_statistics.played > 0 ? Math.round((bracketData.weekly_match_statistics.won / bracketData.weekly_match_statistics.played) * 100) : 0
-        },
-        last_updated: new Date().toISOString()
-      }
-
-      const filteredResult = fields.length > 0 ? 
-        Object.fromEntries(fields.map(field => [field, fullResult[field as keyof typeof fullResult]])) : 
-        fullResult
-
-      if (streamFriendly) {
-        const text = formatBracketAsText(filteredResult)
-        return c.text(text)
-      }
-
-      return c.json(filteredResult)
-    } catch (error) {
-      console.error('Error fetching bracket data:', error)
-      return c.json({ 
-        error: 'Failed to fetch bracket data',
-        message: error instanceof Error ? error.message : 'Unknown error'
-      }, 500)
+      },
+      description: 'Bad request - invalid parameters'
+    },
+    404: {
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
+        }
+      },
+      description: 'Classic MoP character or bracket not found'
+    },
+    500: {
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
+        }
+      },
+      description: 'Internal server error'
     }
   }
-)
+})
 
-app.get(
-  '/classic-mop/character/:realmSlug/:characterName/pvp-bracket/:pvpBracket',
-  validator('query', (value, c) => {
-    const region = value.region || 'us'
-    const locale = value.locale || 'en_US'
-    const fields = value.fields ? value.fields.split(',') : []
-    const streamFriendly = value.stream_friendly === '1'
-    const validRegions = ['us', 'eu', 'kr', 'tw']
+app.openapi(classicBracketRoute, async (c) => {
+  try {
+    const { realmSlug, characterName, pvpBracket } = c.req.valid('param')
+    const { region, locale, fields, stream_friendly } = c.req.valid('query')
+    
+    const fieldsArray = fields ? fields.split(',') : []
+    const streamFriendly = stream_friendly === '1'
     const validFields = ['character', 'bracket', 'rating', 'season', 'weekly', 'last_updated', 'game_version']
     
-    if (!validRegions.includes(region)) {
-      return c.json({ error: 'Invalid region. Must be one of: us, eu, kr, tw' }, 400)
-    }
-    
-    if (fields.length > 0 && !fields.every(field => validFields.includes(field))) {
+    if (fieldsArray.length > 0 && !fieldsArray.every(field => validFields.includes(field))) {
       return c.json({ error: `Invalid fields. Valid fields are: ${validFields.join(', ')}` }, 400)
     }
     
-    return { region, locale, fields, streamFriendly }
-  }),
-  async (c) => {
-    try {
-const { realmSlug, characterName, pvpBracket } = c.req.param()
-      const { region, locale, fields, streamFriendly } = c.req.valid('query')
-       
-      const validBrackets = ['2v2', '3v3', 'rbg']
-      if (!validBrackets.includes(pvpBracket)) {
-        return c.json({ error: 'Invalid PvP bracket. Must be one of: 2v2, 3v3, rbg' }, 400)
-      }
-       
-      if (!realmSlug || !characterName) {
-        return c.json({ error: 'Realm slug and character name are required' }, 400)
-      }
-
-      const token = await getBattleNetToken()
-      const namespace = `profile-classic-${region}`
-      
-      const encodedRealm = encodeURIComponent(realmSlug.toLowerCase())
-      const encodedName = encodeURIComponent(characterName.toLowerCase())
-      
-      const pvpUrl = `https://${region}.api.blizzard.com/profile/wow/character/${encodedRealm}/${encodedName}/pvp-bracket/${pvpBracket}?namespace=${namespace}&locale=${locale}`
-      
-      const response = await fetch(pvpUrl, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      })
-
-      if (!response.ok) {
-        if (response.status === 404) {
-          return c.json({ error: 'Classic MoP character or bracket not found' }, 404)
-        }
-        throw new Error(`Battle.net API error: ${response.status}`)
-      }
-
-      const bracketData: PvPBracket = await response.json()
-
-      const fullResult = {
-        character: {
-          name: bracketData.character.name,
-          realm: bracketData.character.realm.name,
-          realm_slug: bracketData.character.realm.slug
-        },
-        bracket: pvpBracket,
-        rating: bracketData.rating,
-        season: {
-          played: bracketData.season_match_statistics.played,
-          won: bracketData.season_match_statistics.won,
-          lost: bracketData.season_match_statistics.lost,
-          win_rate: bracketData.season_match_statistics.played > 0 ? Math.round((bracketData.season_match_statistics.won / bracketData.season_match_statistics.played) * 100) : 0
-        },
-        weekly: {
-          played: bracketData.weekly_match_statistics.played,
-          won: bracketData.weekly_match_statistics.won,
-          lost: bracketData.weekly_match_statistics.lost,
-          win_rate: bracketData.weekly_match_statistics.played > 0 ? Math.round((bracketData.weekly_match_statistics.won / bracketData.weekly_match_statistics.played) * 100) : 0
-        },
-        last_updated: new Date().toISOString(),
-        game_version: 'classic-mop'
-      }
-
-      const filteredResult = fields.length > 0 ? 
-        Object.fromEntries(fields.map(field => [field, fullResult[field as keyof typeof fullResult]])) : 
-        fullResult
-
-      if (streamFriendly) {
-        const text = formatBracketAsText(filteredResult)
-        return c.text(text)
-      }
-
-      return c.json(filteredResult)
-    } catch (error) {
-      console.error('Error fetching Classic MoP bracket data:', error)
-      return c.json({ 
-        error: 'Failed to fetch Classic MoP bracket data',
-        message: error instanceof Error ? error.message : 'Unknown error'
-      }, 500)
+    if (!realmSlug || !characterName) {
+      return c.json({ error: 'Realm slug and character name are required' }, 400)
     }
+
+    const token = await getBattleNetToken()
+    const namespace = `profile-classic-${region}`
+    
+    const encodedRealm = encodeURIComponent(realmSlug.toLowerCase())
+    const encodedName = encodeURIComponent(characterName.toLowerCase())
+    
+    const pvpUrl = `https://${region}.api.blizzard.com/profile/wow/character/${encodedRealm}/${encodedName}/pvp-bracket/${pvpBracket}?namespace=${namespace}&locale=${locale}`
+    
+    const response = await fetch(pvpUrl, {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    })
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        return c.json({ error: 'Classic MoP character or bracket not found' }, 404)
+      }
+      throw new Error(`Battle.net API error: ${response.status}`)
+    }
+
+    const bracketData: PvPBracket = await response.json()
+
+    const fullResult = {
+      character: {
+        name: bracketData.character.name,
+        realm: bracketData.character.realm.name,
+        realm_slug: bracketData.character.realm.slug
+      },
+      bracket: pvpBracket,
+      rating: bracketData.rating,
+      season: {
+        played: bracketData.season_match_statistics.played,
+        won: bracketData.season_match_statistics.won,
+        lost: bracketData.season_match_statistics.lost,
+        win_rate: bracketData.season_match_statistics.played > 0 ? Math.round((bracketData.season_match_statistics.won / bracketData.season_match_statistics.played) * 100) : 0
+      },
+      weekly: {
+        played: bracketData.weekly_match_statistics.played,
+        won: bracketData.weekly_match_statistics.won,
+        lost: bracketData.weekly_match_statistics.lost,
+        win_rate: bracketData.weekly_match_statistics.played > 0 ? Math.round((bracketData.weekly_match_statistics.won / bracketData.weekly_match_statistics.played) * 100) : 0
+      },
+      last_updated: new Date().toISOString(),
+      game_version: 'classic-mop'
+    }
+
+    const filteredResult = fieldsArray.length > 0 ? 
+      Object.fromEntries(fieldsArray.map(field => [field, fullResult[field as keyof typeof fullResult]])) : 
+      fullResult
+
+    if (streamFriendly) {
+      const text = formatBracketAsText(filteredResult)
+      return c.text(text)
+    }
+
+    return c.json(filteredResult)
+  } catch (error) {
+    console.error('Error fetching Classic MoP bracket data:', error)
+    return c.json({ 
+      error: 'Failed to fetch Classic MoP bracket data',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    }, 500)
   }
-)
+})
+
+app.doc('/doc', {
+  openapi: '3.0.0',
+  info: {
+    version: '1.0.0',
+    title: 'WoW Classic PvP Rank API',
+    description: 'API for fetching WoW character PvP ratings and ranks from Battle.net API'
+  },
+  tags: [
+    {
+      name: 'retail',
+      description: 'Retail WoW PvP endpoints'
+    },
+    {
+      name: 'mop',
+      description: 'WoW Classic MoP PvP endpoints'
+    }
+  ]
+})
+
+app.get('/swagger', swaggerUI({ url: '/doc' }))
 
 export default app

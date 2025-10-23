@@ -3,10 +3,13 @@
   "scripts": {
     "dev": "bun run --hot src/index.ts",
     "start": "bun src/index.ts",
-    "build": "docker build -t pvp-rank-api .",
+    "build": "docker build -t pvp-rank-api ."
   },
   "dependencies": {
-    "hono": "^4.10.2"
+    "@hono/swagger-ui": "^0.5.2",
+    "@hono/zod-openapi": "^1.1.4",
+    "hono": "^4.10.2",
+    "zod": "^4.1.12"
   },
   "devDependencies": {
     "@types/bun": "latest"
