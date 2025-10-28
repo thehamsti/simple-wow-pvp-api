@@ -1,18 +1,43 @@
 # WoW PvP Rank API
 
-A comprehensive API service that fetches PvP ratings and ranks for World of Warcraft characters using the Battle.net API. Supports both retail WoW and WoW Classic MoP (Mists of Pandaria).
+A comprehensive API service that wraps the official Battle.net World of Warcraft APIs behind a friendlier surface. The project now ships a new `/v1` versioned API that unifies metadata, realm lookup, and character data across game flavors while keeping the legacy endpoints untouched for backwards compatibility.
 
 ## Features
 
-- **Dual Game Support**: Retail WoW and WoW Classic MoP characters
-- **Multiple Endpoints**: Character summaries and specific PvP bracket data
-- **Flexible Output**: JSON or stream-friendly plain text format
-- **Field Filtering**: Request only specific data fields
-- **Multi-Region Support**: US, EU, KR, TW regions
-- **Localization**: Support for multiple locales
-- **Token Caching**: Optimized performance with cached Battle.net tokens
-- **Comprehensive Error Handling**: Detailed validation and error responses
-- **Win Rate Calculations**: Automatic win rate computation for season and weekly stats
+- **Versioned `/v1` API**: Clean resource layout (`status`, `meta`, `realms`, `characters`) with consistent response envelopes.
+- **Human-Friendly Responses**: Flattened payloads, optional field filtering, and derived PvP win rates.
+- **Multi-Game Support**: Retail plus Classic Era / Wrath / Hardcore character + PvP data via the same shapes; legacy routes remain intact.
+- **Shared Battle.net Adapter**: Centralized token caching, retry-friendly error surfaces.
+- **Testing Utilities**: Bun scripts to inspect official API responses and hit the new `/v1` routes with real credentials.
+
+## `/v1` API Overview
+
+All new routes live under the `/v1` prefix and return a standard envelope of `{ data, meta }`.
+
+| Endpoint | Description |
+| --- | --- |
+| `GET /v1/status` | Service health, uptime, and token cache metadata. |
+| `GET /v1/meta/games` | Supported game variants (retail, classic flavors). |
+| `GET /v1/meta/regions` | Supported regions with default locales. |
+| `GET /v1/{game}/realms` | Realm index for the selected game+region. |
+| `GET /v1/{game}/characters/{realm}/{name}` | Character summary with optional `fields` filtering. |
+| `GET /v1/{game}/characters/{realm}/{name}/pvp` | PvP overview (season stats, honor, win rates). |
+
+`game` accepts `retail`, `classic-era`, `classic-wotlk`, and `classic-hc`. Classic payloads expose the same flattened summary/win-rate format; missing upstream stats simply appear as `null`.
+
+### Example
+
+```bash
+# Character summary and PvP data (server must be running on port 3000)
+curl "http://localhost:3000/v1/retail/characters/area-52/thiaba?region=us&locale=en_US"
+curl "http://localhost:3000/v1/retail/characters/area-52/thiaba/pvp?region=us"
+
+# Realm index
+curl "http://localhost:3000/v1/retail/realms?region=us"
+
+# Classic Era example
+curl "http://localhost:3000/v1/classic-era/characters/whitemane/foobarius/pvp?region=us"
+```
 
 ## Setup
 
@@ -59,7 +84,26 @@ bun run dev
 
 The API will be available at `http://localhost:3000` or the next available port (3001, 3002, etc.) if port 3000 is in use. The console will show the actual port used.
 
-## API Endpoints
+## Test Scripts
+
+Quick Bun scripts are available to compare the official Battle.net payloads against the new `/v1` responses. All scripts expect `BATTLE_NET_CLIENT_ID` and `BATTLE_NET_CLIENT_SECRET` in your environment.
+
+```bash
+# Inspect the raw Battle.net profile + PvP summary (prints JSON for each bracket)
+bun scripts/official-character.ts retail area-52 thiaba
+
+# Hit the new /v1 character summary + PvP endpoints on the running server
+bun scripts/v1-character.ts retail area-52 thiaba
+
+# List realms for a given game + region via /v1
+bun scripts/v1-realms.ts retail
+```
+
+Set `API_BASE_URL`, `TEST_REGION`, or `TEST_LOCALE` to override the defaults (`http://localhost:3000/v1`, `us`, `en_US` respectively).
+
+## Legacy API Endpoints
+
+The original routes remain available without the `/v1` prefix for clients that rely on them today. They continue to behave exactly as before.
 
 ### GET `/`
 

@@ -3,6 +3,7 @@
   "scripts": {
     "dev": "bun run --hot src/index.ts",
     "start": "bun src/index.ts",
+    "test": "bun test",
     "build": "docker build -t pvp-rank-api ."
   },
   "dependencies": {

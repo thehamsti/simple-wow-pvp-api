@@ -1,0 +1,5 @@
+export { rootRoute, rootHandler } from './root'
+export { characterRoute, characterHandler } from './retail-character'
+export { classicCharacterRoute, classicCharacterHandler } from './classic-character'
+export { bracketRoute, bracketHandler } from './retail-bracket'
+export { classicBracketRoute, classicBracketHandler } from './classic-bracket'
